@@ -142,6 +142,77 @@ void wait_children(pid_t* pids, int n)
         waitpid(pids[i], NULL, 0);
 }
 
+/* Stage 3: combat loop - runs in child until knight's HP drops to 0 or below,
+ * or all enemies are dead (all enemy write pipes broken).
+ * Uses a swap-based living-enemy array for O(1) dead-enemy removal.
+ * read_fd    : own pipe read end (non-blocking after setup)
+ * enemy_pipes: array of enemy pipes; only [j][1] (write ends) are open here
+ * n_enemy    : number of enemies
+ */
+void fight(struct Knight* k, int read_fd,
+           int (*enemy_pipes)[2], int n_enemy)
+{
+    srand(getpid());
+    signal(SIGPIPE, SIG_IGN);
+
+    // Set own read end non-blocking
+    int flags = fcntl(read_fd, F_GETFL);
+    if (flags == -1) ERR("fcntl");
+    if (fcntl(read_fd, F_SETFL, flags | O_NONBLOCK) == -1) ERR("fcntl");
+
+    // living[0..last] are indices of still-alive enemies in enemy_pipes
+    int* living = malloc(n_enemy * sizeof(int));
+    if (!living) ERR("malloc");
+    for (int i = 0; i < n_enemy; i++) living[i] = i;
+    int last = n_enemy - 1;
+
+    while (k->hp > 0 && last >= 0) {
+        // Step 1: drain all damage bytes currently in the pipe
+        uint8_t dmg;
+        ssize_t r;
+        while ((r = read(read_fd, &dmg, 1)) == 1) {
+            k->hp -= (int)dmg;
+            if (k->hp <= 0) break;
+        }
+        if (r == -1 && errno != EAGAIN) ERR("read");
+        if (k->hp <= 0) break;
+
+        // Step 2: pick a random living enemy and deal a blow
+        int pos = rand() % (last + 1);
+        int enemy = living[pos];
+        uint8_t S = (uint8_t)(rand() % (k->attack + 1));
+        if (write(enemy_pipes[enemy][1], &S, 1) == -1) {
+            if (errno == EPIPE) {
+                // enemy is dead: close his fd, swap with last living, shrink pool
+                close(enemy_pipes[enemy][1]);
+                living[pos] = living[last];
+                last--;
+                continue;
+            }
+            ERR("write");
+        }
+
+        // Step 3: print message based on blow strength
+        if (S == 0)
+            printf("%s attacks his enemy, however he deflected\n", k->name);
+        else if (S <= 5)
+            printf("%s goes to strike, he hit right and well\n", k->name);
+        else
+            printf("%s strikes powerful blow, the shield he breaks and inflicts a big wound\n", k->name);
+
+        // Step 4: wait t ms, t in [1, 10]
+        msleep(1 + rand() % 10);
+    }
+
+    // Close remaining open enemy write ends and own read end
+    for (int i = 0; i <= last; i++)
+        close(enemy_pipes[living[i]][1]);
+    close(read_fd);
+    free(living);
+
+    printf("%s dies glorious death\n", k->name);
+}
+
 /*
  * Fork one child per knight on my_side.
  * Each child keeps:  my_pipes[i][0]          (own read end)
@@ -173,6 +244,9 @@ int spawn_knights(struct Knight* knights, int n,
             printf("I am %s knight %s. I will serve my king with my %d HP and %d attack\n",
                    knight_type, knights[i].name, knights[i].hp, knights[i].attack);
             printf("Open descriptors after close enemy: %d\n", count_descriptors());
+
+            // Stage 3: fight until dead
+            fight(&knights[i], my_pipes[i][0], enemy_pipes, n_enemy);
             exit(EXIT_SUCCESS);
         }
         pids[i] = pid;
