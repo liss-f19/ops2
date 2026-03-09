@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -21,7 +22,7 @@ struct Knight{
     char name[MAX_KNIGHT_NAME_LENGHT];
     int hp;
     int attack;
-} Knight;
+};
     
 int set_handler(void (*f)(int), int sig)
 {
@@ -71,23 +72,23 @@ int count_descriptors()
     return count - 1;  // one descriptor for open directory
 }
 
-int read_file(char* filename, char* side)
+int read_file(char* filename, char* side_name, char* knight_type)
 {
     int num_of_knights;
     FILE *file;
     file = fopen(filename, "r");
 
     if (file == NULL) {
-        printf("%s have not arrived on the battlefield", side);
-    };
+        printf("%s have not arrived on the battlefield\n", side_name);
+        return 0;
+    }
 
     fscanf(file, "%d", &num_of_knights);
-    printf("Number of knights %d\n", num_of_knights);
 
     for (int i=0; i<num_of_knights; i++) {
         struct Knight k;
-        fscanf(file, "%s %d %d", k.name, &k.hp, &k.attack);
-        printf("I am %s knight %s. I will serve my king with my %d HP and %d attack\n", side, k.name, k.hp, k.attack);
+        fscanf(file, "%19s %d %d", k.name, &k.hp, &k.attack);
+        printf("I am %s knight %s. I will serve my king with my %d HP and %d attack\n", knight_type, k.name, k.hp, k.attack);
     }
 
     fclose(file);
@@ -99,6 +100,7 @@ int main(int argc, char* argv[])
 {
     // srand(time(NULL));
     // printf("Opened descriptors: %d\n", count_descriptors());
-    read_file("saraceni.txt", "Saracens");
-    read_file("franci.txt", "Franci");
+    read_file("saraceni.txt", "Saracens", "Spanish");
+    read_file("franci.txt", "Franks", "Frankish");
 }
+
